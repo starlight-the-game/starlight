@@ -2,7 +2,7 @@ import Fuse from "fuse.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import "../assets/stylesheets/SuggestionPage.css";
-import EmotivConnectButton from "../components/EmotivConnectButton";
+import EmotivConnectButton, { EmotivConnectRef } from "../components/EmotivConnectButton";
 import SpotifyPlayer from "../components/SpotifyPlayer";
 import StartCortexButton from "../components/StartCortexButton";
 import SuggestionHeaderBar from "../components/SuggestionHeaderBar";
@@ -40,12 +40,19 @@ function SuggestionPage() {
     const [isCollectingData, setIsCollectingData] = useState(false);
     const [connectionStatus, setConnectionStatus] = useState("Not connected");
     const [retryCount, setRetryCount] = useState(0);
+    const [serverAvailable, setServerAvailable] = useState(false);
     const cortexTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     // Model for recommendation
     const modelRef = useRef<SongRecommendationModel | null>(null);
     const socketRef = useRef<WebSocket | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
+
+    // Add ref for EmotivConnectButton
+    const emotivConnectRef = useRef<EmotivConnectRef>(null);
+    
+    // Counter to force UI updates when recommendations change
+    const [updateCounter, setUpdateCounter] = useState(0);
 
     // Mood options for filtering based on valence ranges
     const moodOptions = [
@@ -70,7 +77,8 @@ function SuggestionPage() {
                 socketRef.current = null;
             }
 
-            // Clear any pending timeouts
+            // Remove the cortexTimeoutRef since we won't be using it anymore
+            // EmotivConnectButton handles its own timing
             if (cortexTimeoutRef.current) {
                 clearTimeout(cortexTimeoutRef.current);
                 cortexTimeoutRef.current = null;
@@ -121,50 +129,111 @@ function SuggestionPage() {
         }
     }, []);
 
-    // Process metrics data to get recommendations
+    // Check server availability periodically
+    useEffect(() => {
+        let mounted = true;
+
+        const checkServer = async () => {
+            const running = await isCortexServerRunning();
+            if (mounted) {
+                setServerAvailable(running);
+            }
+        };
+
+        checkServer();
+        const interval = setInterval(checkServer, 5000);
+
+        return () => {
+            mounted = false;
+            clearInterval(interval);
+        };
+    }, []);
+
+    // Process metrics data to get recommendations - improved to ensure complete workflow
     const processMetrics = async (metrics: MetricData[][]): Promise<void> => {
         if (!modelRef.current || songs.length === 0) {
+            setConnectionStatus("Error: Model or songs not available");
             throw new Error("Model or songs not loaded");
         }
 
         setConnectionStatus(`Processing ${metrics.length} data points`);
 
         try {
+            console.log("STEP 1: Calculating EWMA...");
             // Step 1: Compute EMA
             const ema = modelRef.current.calculateEWMA(metrics);
+            console.log("EWMA calculated:", ema);
             setEmaMetrics(ema);
 
+            console.log("STEP 2: Calculating Target Mental State...");
             // Step 2: Compute Target Mental State
             const target = modelRef.current.calculateTargetMentalState();
+            console.log("Target mental state:", target);
 
+            console.log("STEP 3: Computing Weight Matrix...");
             // Step 3: Compute Weight Matrix
             const deltaT = target.map((t, i) => t - ema[i]);
+            console.log("Delta T:", deltaT);
             const weightMatrix = modelRef.current.computeWeightMatrix(deltaT, songs[0]);
+            console.log("Weight matrix calculated");
 
+            console.log("STEP 4: Computing Ideal Song Properties...");
             // Step 4: Compute Ideal Song Properties
             const idealProps = modelRef.current.computeIdealSongProps(weightMatrix, deltaT, ema);
+            console.log("Ideal song properties:", idealProps);
             setIdealSongProps(idealProps);
 
+            console.log("STEP 5: Finding Best Matching Songs...");
             // Step 5: Find Best Matching Songs
             const { sortedSongIds } = modelRef.current.findBestMatchingSong(idealProps, songs);
+            console.log(`Found ${sortedSongIds.length} sorted songs`);
             setRecommendedSongIds(sortedSongIds);
 
-            // Update filtered songs to show recommended ones first
-            const recommendedSongs = sortedSongIds
-                .map((id) => songs.find((song) => song.id === id))
-                .filter((song) => !!song) as SongProperties[];
+            // Explicitly update filtered songs with the new order
+            console.log("Reordering song list...");
+            
+            // Create a Map for faster lookups
+            const songMap = new Map(songs.map(song => [song.id, song]));
+            
+            // Get the recommended songs in order
+            const orderedRecommendedSongs = sortedSongIds
+                .map(id => songMap.get(id))
+                .filter(Boolean) as SongProperties[];
+                
+            // Get remaining songs (not in recommended list)
+            const remainingSongs = songs.filter(song => !sortedSongIds.includes(song.id));
+            
+            // Combine with recommended songs first
+            const newFilteredSongs = [...orderedRecommendedSongs, ...remainingSongs];
+            
+            // Apply any current filters (search, mood) to the ordered list
+            let finalFilteredSongs = [...newFilteredSongs];
+            
+            if (selectedMood) {
+                const [minValence, maxValence] = selectedMood.split("-").map(Number);
+                finalFilteredSongs = finalFilteredSongs.filter(
+                    song => song.valence >= minValence && song.valence <= maxValence
+                );
+            }
+            
+            if (searchQuery.trim()) {
+                const fuseOptions = { keys: ["title", "artists"], threshold: 0.3 };
+                const fuse = new Fuse(finalFilteredSongs, fuseOptions);
+                finalFilteredSongs = fuse.search(searchQuery).map(result => result.item);
+            }
+            
+            setFilteredSongs(finalFilteredSongs);
 
-            const otherSongs = songs.filter((song) => !sortedSongIds.includes(song.id));
-
-            // Explicitly update the filtered songs list with new order
-            setFilteredSongs([...recommendedSongs, ...otherSongs]);
-
-            setConnectionStatus(`Analysis complete - recommended ${sortedSongIds.length} songs`);
-
-            // Return a resolved promise (function is now async)
+            setConnectionStatus(`Analysis complete - ${orderedRecommendedSongs.length} songs recommended based on your mental state`);
+            
+            // Log completion of the process
+            console.log("Model logic workflow completed successfully");
+            // Force a UI update by incrementing updateCounter
+            setUpdateCounter(prev => prev + 1);
             return Promise.resolve();
         } catch (error) {
-            setConnectionStatus("Error processing data");
+            console.error("Error in model logic workflow:", error);
+            setConnectionStatus("Error processing brain data");
             return Promise.reject(error);
         }
     };
@@ -321,12 +390,23 @@ function SuggestionPage() {
         }, 3000);
     }, [metricsData, isCollectingData]);
 
-    // Function for handling playback start
+    // Function for handling playback start - Updated to trigger Emotiv collection
     const handlePlaybackStart = useCallback(() => {
         setIsPlaying(true);
 
-        // Start collecting data from Cortex server
+        // Start collecting data from Cortex server via websocket
         startCortexDataCollection();
+
+        // IMPORTANT NEW PART: Also trigger the EmotivConnectButton if it's available
+        if (emotivConnectRef.current && serverAvailable) {
+            console.log("Track started - Automatically starting brain data collection");
+            emotivConnectRef.current.startCollection()
+                .then(success => {
+                    if (success) {
+                        console.log("Emotiv data collection started automatically");
+                    }
+                });
+        }
 
         // Set a timeout to stop data collection based on song duration
         if (currentSong && currentSong.duration) {
@@ -341,14 +421,26 @@ function SuggestionPage() {
             setConnectionStatus(`Will collect for ${Math.round(durationMs / 1000)}s`);
 
             cortexTimeoutRef.current = setTimeout(() => {
+                // Stop websocket data collection
                 stopCortexDataCollection();
+                
+                // IMPORTANT NEW PART: Also stop the Emotiv Connect data collection when track ends
+                if (emotivConnectRef.current) {
+                    console.log("Track ended - Automatically stopping brain data collection");
+                    emotivConnectRef.current.stopCollection();
+                }
             }, durationMs);
         }
-    }, [currentSong, startCortexDataCollection, stopCortexDataCollection]);
+    }, [currentSong, startCortexDataCollection, stopCortexDataCollection, serverAvailable]);
 
-    // Function for handling playback stop/pause
+    // Function for handling playback stop/pause - Also stop data collection
     const handlePlaybackStop = useCallback(() => {
         setIsPlaying(false);
+        
+        // Also stop Emotiv collection if it's running
+        if (emotivConnectRef.current) {
+            emotivConnectRef.current.stopCollection();
+        }
     }, []);
 
     // Function to update UI when track plays/pauses
@@ -389,25 +481,20 @@ function SuggestionPage() {
         [stopCortexDataCollection]
     );
 
-    // Handle clicking on a song in the list
+    // Handle clicking on a song in the list - Simplified
     const handleSongItemClick = (index: number) => {
-        // Stop current audio and data collection
+        // Stop current audio
         if (isPlaying) {
             if (audioRef.current) {
                 audioRef.current.pause();
                 audioRef.current.src = "";
             }
-
-            // Stop current data collection if switching songs
-            stopCortexDataCollection();
-
-            // Clear any existing timeout
-            if (cortexTimeoutRef.current) {
-                clearTimeout(cortexTimeoutRef.current);
-                cortexTimeoutRef.current = null;
-            }
-
             setIsPlaying(false);
+        }
+
+        // Stop any active brain data collection when changing songs
+        if (emotivConnectRef.current) {
+            emotivConnectRef.current.stopCollection();
         }
 
         setCurrentSongIndex(index);
@@ -514,32 +601,50 @@ function SuggestionPage() {
         }
     }, [isPlaying, startCortexDataCollection]);
 
-    // Function to handle Emotiv connection start
+    // Function to handle Emotiv connection start - Updated for closed-loop system
     const handleEmotivConnectStart = useCallback(() => {
         setConnectionStatus("Starting Emotiv data collection...");
         // Clear previous metrics data when starting a new collection
         setMetricsData([]);
-    }, []);
+        
+        // Start the Cortex data collection process
+        startCortexDataCollection();
+    }, [startCortexDataCollection]);
 
-    // Function to handle when Emotiv data collection completes
+    // Function to handle when Emotiv data collection completes - Improved for closed-loop system
     const handleEmotivDataComplete = useCallback(
         (success: boolean) => {
             if (success) {
                 setConnectionStatus("Emotiv data collection complete, processing results...");
 
-                // If we have collected metrics data from the WebSocket during the collection period
+                // Ensure we process whatever data we collected
                 if (metricsData.length > 0) {
-                    console.log(
-                        `Processing ${metricsData.length} collected metrics after collection completed`
-                    );
-                    processMetrics(metricsData);
+                    console.log(`Processing ${metricsData.length} metrics after Emotiv collection completed`);
+                    
+                    // Process metrics and ensure complete workflow - important!
+                    processMetrics(metricsData)
+                        .then(() => {
+                            setConnectionStatus("Brain analysis complete - song recommendations updated");
+                        })
+                        .catch((error) => {
+                            console.error("Error in metric processing:", error);
+                            setConnectionStatus("Error in analysis - using default recommendations");
+                            // Try with sample data as fallback
+                            processMetrics(sampleData);
+                        });
                 } else {
-                    // If no metrics data was collected, use sample data
-                    console.log("No metrics data collected, using sample data");
-                    processMetrics(sampleData);
+                    console.log("No metrics collected, using sample data");
+                    processMetrics(sampleData)
+                        .then(() => {
+                            setConnectionStatus("Analysis complete with sample data");
+                        });
                 }
             } else {
                 setConnectionStatus("Emotiv data collection stopped manually");
+                // Even if manually stopped, process whatever data we collected
+                if (metricsData.length > 10) { // Only process if we have enough data points
+                    processMetrics(metricsData);
+                }
             }
         },
         [metricsData, processMetrics]
@@ -602,7 +707,7 @@ function SuggestionPage() {
                             </div>
                         </div>
 
-                        <div className="score-panel">
+                        <div className="score-panel" key={updateCounter}>
                             <h2 className="score-panel-header">Current Mental State</h2>
 
                             <div className="stats-grid">
@@ -670,15 +775,16 @@ function SuggestionPage() {
 
                             {/* Add the Emotiv Connect button */}
                             <EmotivConnectButton
+                                ref={emotivConnectRef}
                                 trackDuration={currentSong?.duration}
                                 onConnectStart={handleEmotivConnectStart}
                                 onDataCollectionComplete={handleEmotivDataComplete}
-                                disabled={!isCortexConnected && !isCortexServerRunning}
+                                disabled={!serverAvailable}
                             />
                         </div>
                     </div>
 
-                    <div className="suggestion-container">
+                    <div className="suggestion-container" key={updateCounter}>
                         <div className="search-filter-container">
                             <div className="search-bar">
                                 <input

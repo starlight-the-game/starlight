@@ -157,66 +157,6 @@ const SpotifyPlayer = ({ trackUrl, onPlaybackChange, onError, duration }: Spotif
         return false;
     }, [duration, onPlaybackChange]);
 
-    // Open Spotify embed modal
-    const openSpotifyModal = useCallback(() => {
-        if (!trackId) {
-            onError?.("No valid track ID found");
-            return;
-        }
-
-        setIsLoading(true);
-        setIsModalOpen(true);
-
-        // Notify parent that playback is "on"
-        onPlaybackChange?.(true);
-
-        // Start the auto-close timer based on song duration
-        startDurationTimer();
-
-        setTimeout(() => {
-            setIsLoading(false);
-        }, 800);
-    }, [trackId, onError, onPlaybackChange, startDurationTimer]);
-
-    // Close Spotify embed modal
-    const closeSpotifyModal = useCallback(() => {
-        setIsModalOpen(false);
-        onPlaybackChange?.(false);
-
-        if (timerRef.current) {
-            clearTimeout(timerRef.current);
-            timerRef.current = null;
-        }
-
-        if (intervalRef.current) {
-            clearInterval(intervalRef.current);
-            intervalRef.current = null;
-        }
-
-        setRemainingTime(null);
-
-        if (spotifyWindowRef.current) {
-            try {
-                spotifyWindowRef.current.close();
-            } catch (e) {
-                console.log("Could not close Spotify window:", e);
-            }
-            spotifyWindowRef.current = null;
-        }
-    }, [onPlaybackChange]);
-
-    // Close on ESC key
-    useEffect(() => {
-        const handleKeyDown = (event: KeyboardEvent) => {
-            if (event.key === "Escape" && isModalOpen) {
-                closeSpotifyModal();
-            }
-        };
-
-        window.addEventListener("keydown", handleKeyDown);
-        return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [isModalOpen, closeSpotifyModal]);
-
     // Open in native Spotify app
     const openInSpotifyApp = useCallback(() => {
         if (!trackId) return;
@@ -246,6 +186,48 @@ const SpotifyPlayer = ({ trackUrl, onPlaybackChange, onError, duration }: Spotif
             }
         }, 1500);
     }, [trackId, isModalOpen]);
+
+    // Open Spotify embed modal
+    const openSpotifyModal = useCallback(() => {
+        if (!trackId) {
+            onError?.("No valid track ID found");
+            return;
+        }
+
+        setIsLoading(true);
+        setIsModalOpen(true);
+
+        // NEW: Automatically open in Spotify App when the play button is clicked
+        openInSpotifyApp();
+
+        // Notify parent that playback is "on"
+        onPlaybackChange?.(true);
+
+        // Start the auto-close timer based on song duration
+        startDurationTimer();
+
+        setTimeout(() => {
+            setIsLoading(false);
+        }, 800);
+    }, [trackId, onError, onPlaybackChange, startDurationTimer, openInSpotifyApp]);
+
+    // Close Spotify embed modal
+    const closeSpotifyModal = useCallback(() => {
+        setIsModalOpen(false);
+        onPlaybackChange?.(false);
+
+        if (timerRef.current) {
+            clearTimeout(timerRef.current);
+            timerRef.current = null;
+        }
+        
+        if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+        }
+        
+        setRemainingTime(null);
+    }, [onPlaybackChange]);
 
     // Connect to Spotify
     const connectToSpotify = useCallback(() => {

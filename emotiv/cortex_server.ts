@@ -205,10 +205,8 @@ wss.on("connection", async (ws) => {
                                         rawData: rawDataStr
                                     });
 
-                                    // Only log collection milestones
-                                    if (allMetrics.length === 1 || allMetrics.length % 50 === 0) {
-                                        console.log(`Metrics collected: ${allMetrics.length}`);
-                                    }
+                                    console.log(`Metrics collected [${allMetrics.length}]:`, JSON.stringify(formattedMetric));
+                                    
                                 } catch (error) {
                                     console.error("Error processing metric data:", error);
                                 }

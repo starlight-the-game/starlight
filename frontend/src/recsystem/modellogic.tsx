@@ -182,7 +182,7 @@ export class SongRecommendationModel {
 
     /**
      * Step 5: Find the Best Matching Song in Track List using Euclidean Distance
-     * Now returns only the top 6 best matching songs
+     * Returns ALL songs sorted by distance to provide complete ordering
      */
     public findBestMatchingSong(
         idealProps: number[],
@@ -212,11 +212,11 @@ export class SongRecommendationModel {
         // Get the best song
         const bestSong = distances[0].song;
 
-        // Return only the top 6 song IDs
-        const sortedSongIds = distances.slice(0, 6).map((d) => d.id);
+        // Return ALL song IDs sorted by distance - this is the key change
+        const sortedSongIds = distances.map((d) => d.id);
 
-        // Log the top 6 songs with their distances
-        console.log("Top 6 recommended songs:");
+        // Log the top 6 songs with their distances for debugging
+        console.log(`Top recommended songs (showing 6 of ${sortedSongIds.length} total):`);
         distances.slice(0, 6).forEach((d, index) => {
             console.log(
                 `${index + 1}. ID: ${d.id}, Distance: ${d.distance.toFixed(4)}, Title: ${d.song.title}`
