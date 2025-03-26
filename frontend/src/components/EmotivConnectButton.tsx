@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 import "../assets/stylesheets/EmotivConnectButton.css";
 import { isCortexServerRunning } from "../utils/CortexServerUtils";
@@ -18,11 +18,21 @@ interface EmotivConnectButtonProps {
 }
 
 const EmotivConnectButton = forwardRef<EmotivConnectRef, EmotivConnectButtonProps>(
-    ({ trackDuration, onConnectStart, onDataCollectionComplete, onStatusUpdate, disabled = false }, ref) => {
+    (
+        {
+            trackDuration,
+            onConnectStart,
+            onDataCollectionComplete,
+            onStatusUpdate,
+            disabled = false
+        },
+        ref
+    ) => {
         const [isConnecting, setIsConnecting] = useState(false);
         const [isCollecting, setIsCollecting] = useState(false);
         const [countdown, setCountdown] = useState<number | null>(null);
         const [serverAvailable, setServerAvailable] = useState(false);
+        const endTimeRef = useRef<number | null>(null);
 
         // Check server availability
         useEffect(() => {
@@ -44,40 +54,24 @@ const EmotivConnectButton = forwardRef<EmotivConnectRef, EmotivConnectButtonProp
             };
         }, []);
 
-        // Handle countdown timer with improved status updates
+        // New countdown updater using target endTime rather than decrementing a counter
         useEffect(() => {
-            let timer: NodeJS.Timeout | null = null;
-
-            if (isCollecting && countdown !== null && countdown > 0) {
-                timer = setTimeout(() => {
-                    const newCountdown = countdown - 1;
-                    setCountdown(newCountdown);
-                    
-                    // Update status every 5 seconds or during final countdown
-                    if (newCountdown % 5 === 0 || newCountdown <= 3) {
-                        onStatusUpdate?.(`Collecting brain data: ${newCountdown}s remaining`);
+            if (isCollecting && endTimeRef.current) {
+                const interval = setInterval(() => {
+                    const remaining = Math.ceil((endTimeRef.current! - Date.now()) / 1000);
+                    setCountdown(remaining);
+                    if (remaining <= 0) {
+                        clearInterval(interval);
+                        onStatusUpdate?.("Track finished, processing brain data...");
+                        setIsCollecting(false);
+                        setIsConnecting(false);
+                        setCountdown(0);
+                        onDataCollectionComplete?.(true);
                     }
-
-                    // When countdown is about to expire, alert user
-                    if (newCountdown === 3) {
-                        console.log("Track ending soon, preparing to process brain data...");
-                    }
-                }, 1000);
-            } else if (isCollecting && countdown === 0) {
-                // Collection complete - trigger the workflow
-                onStatusUpdate?.("Track finished, processing brain data...");
-                setIsCollecting(false);
-                setIsConnecting(false);
-                setCountdown(null);
-                
-                // Important: This triggers the closed-loop workflow
-                onDataCollectionComplete?.(true);
+                }, 250);
+                return () => clearInterval(interval);
             }
-
-            return () => {
-                if (timer) clearTimeout(timer);
-            };
-        }, [isCollecting, countdown, onDataCollectionComplete, onStatusUpdate]);
+        }, [isCollecting, onDataCollectionComplete, onStatusUpdate]);
 
         // Function to start data collection
         const startDataCollection = useCallback(async () => {
@@ -85,7 +79,7 @@ const EmotivConnectButton = forwardRef<EmotivConnectRef, EmotivConnectButtonProp
                 console.log("Already collecting data");
                 return false;
             }
-            
+
             setIsConnecting(true);
             onStatusUpdate?.("Initializing Emotiv connection...");
             onConnectStart?.();
@@ -98,8 +92,9 @@ const EmotivConnectButton = forwardRef<EmotivConnectRef, EmotivConnectButtonProp
                 return false;
             }
 
-            // Start countdown timer based on track duration or default to 30 seconds
-            const duration = trackDuration ? Math.min(trackDuration, 180) : 30;
+            // Use the trackDuration exactly without buffer limits
+            const duration = trackDuration ? trackDuration : 30;
+            endTimeRef.current = Date.now() + duration * 1000; // NEW: Save target end time
             setCountdown(duration);
             setIsCollecting(true);
             onStatusUpdate?.(`Starting brain data collection for ${duration} seconds`);
@@ -125,13 +120,13 @@ const EmotivConnectButton = forwardRef<EmotivConnectRef, EmotivConnectButtonProp
             if (!isCollecting) {
                 return; // Nothing to stop
             }
-            
+
             console.log("Stopping Emotiv data collection");
             onStatusUpdate?.("Stopping data collection...");
             setIsCollecting(false);
             setIsConnecting(false);
             setCountdown(null);
-            
+
             // This will trigger processing of whatever data we've collected so far
             onDataCollectionComplete?.(false);
         }, [onDataCollectionComplete, onStatusUpdate, isCollecting]);

@@ -205,8 +205,10 @@ wss.on("connection", async (ws) => {
                                         rawData: rawDataStr
                                     });
 
-                                    console.log(`Metrics collected [${allMetrics.length}]:`, JSON.stringify(formattedMetric));
-                                    
+                                    console.log(
+                                        `Metrics collected [${allMetrics.length}]:`,
+                                        JSON.stringify(formattedMetric)
+                                    );
                                 } catch (error) {
                                     console.error("Error processing metric data:", error);
                                 }

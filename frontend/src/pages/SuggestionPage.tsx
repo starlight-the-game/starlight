@@ -50,7 +50,7 @@ function SuggestionPage() {
 
     // Add ref for EmotivConnectButton
     const emotivConnectRef = useRef<EmotivConnectRef>(null);
-    
+
     // Counter to force UI updates when recommendations change
     const [updateCounter, setUpdateCounter] = useState(0);
 
@@ -191,45 +191,47 @@ function SuggestionPage() {
 
             // Explicitly update filtered songs with the new order
             console.log("Reordering song list...");
-            
+
             // Create a Map for faster lookups
-            const songMap = new Map(songs.map(song => [song.id, song]));
-            
+            const songMap = new Map(songs.map((song) => [song.id, song]));
+
             // Get the recommended songs in order
             const orderedRecommendedSongs = sortedSongIds
-                .map(id => songMap.get(id))
+                .map((id) => songMap.get(id))
                 .filter(Boolean) as SongProperties[];
-                
+
             // Get remaining songs (not in recommended list)
-            const remainingSongs = songs.filter(song => !sortedSongIds.includes(song.id));
-            
+            const remainingSongs = songs.filter((song) => !sortedSongIds.includes(song.id));
+
             // Combine with recommended songs first
             const newFilteredSongs = [...orderedRecommendedSongs, ...remainingSongs];
-            
+
             // Apply any current filters (search, mood) to the ordered list
             let finalFilteredSongs = [...newFilteredSongs];
-            
+
             if (selectedMood) {
                 const [minValence, maxValence] = selectedMood.split("-").map(Number);
                 finalFilteredSongs = finalFilteredSongs.filter(
-                    song => song.valence >= minValence && song.valence <= maxValence
+                    (song) => song.valence >= minValence && song.valence <= maxValence
                 );
             }
-            
+
             if (searchQuery.trim()) {
                 const fuseOptions = { keys: ["title", "artists"], threshold: 0.3 };
                 const fuse = new Fuse(finalFilteredSongs, fuseOptions);
-                finalFilteredSongs = fuse.search(searchQuery).map(result => result.item);
+                finalFilteredSongs = fuse.search(searchQuery).map((result) => result.item);
             }
-            
+
             setFilteredSongs(finalFilteredSongs);
 
-            setConnectionStatus(`Analysis complete - ${orderedRecommendedSongs.length} songs recommended based on your mental state`);
-            
+            setConnectionStatus(
+                `Analysis complete - ${orderedRecommendedSongs.length} songs recommended based on your mental state`
+            );
+
             // Log completion of the process
             console.log("Model logic workflow completed successfully");
             // Force a UI update by incrementing updateCounter
-            setUpdateCounter(prev => prev + 1);
+            setUpdateCounter((prev) => prev + 1);
             return Promise.resolve();
         } catch (error) {
             console.error("Error in model logic workflow:", error);
@@ -400,12 +402,11 @@ function SuggestionPage() {
         // IMPORTANT NEW PART: Also trigger the EmotivConnectButton if it's available
         if (emotivConnectRef.current && serverAvailable) {
             console.log("Track started - Automatically starting brain data collection");
-            emotivConnectRef.current.startCollection()
-                .then(success => {
-                    if (success) {
-                        console.log("Emotiv data collection started automatically");
-                    }
-                });
+            emotivConnectRef.current.startCollection().then((success) => {
+                if (success) {
+                    console.log("Emotiv data collection started automatically");
+                }
+            });
         }
 
         // Set a timeout to stop data collection based on song duration
@@ -423,7 +424,7 @@ function SuggestionPage() {
             cortexTimeoutRef.current = setTimeout(() => {
                 // Stop websocket data collection
                 stopCortexDataCollection();
-                
+
                 // IMPORTANT NEW PART: Also stop the Emotiv Connect data collection when track ends
                 if (emotivConnectRef.current) {
                     console.log("Track ended - Automatically stopping brain data collection");
@@ -436,7 +437,7 @@ function SuggestionPage() {
     // Function for handling playback stop/pause - Also stop data collection
     const handlePlaybackStop = useCallback(() => {
         setIsPlaying(false);
-        
+
         // Also stop Emotiv collection if it's running
         if (emotivConnectRef.current) {
             emotivConnectRef.current.stopCollection();
@@ -606,7 +607,7 @@ function SuggestionPage() {
         setConnectionStatus("Starting Emotiv data collection...");
         // Clear previous metrics data when starting a new collection
         setMetricsData([]);
-        
+
         // Start the Cortex data collection process
         startCortexDataCollection();
     }, [startCortexDataCollection]);
@@ -619,30 +620,36 @@ function SuggestionPage() {
 
                 // Ensure we process whatever data we collected
                 if (metricsData.length > 0) {
-                    console.log(`Processing ${metricsData.length} metrics after Emotiv collection completed`);
-                    
+                    console.log(
+                        `Processing ${metricsData.length} metrics after Emotiv collection completed`
+                    );
+
                     // Process metrics and ensure complete workflow - important!
                     processMetrics(metricsData)
                         .then(() => {
-                            setConnectionStatus("Brain analysis complete - song recommendations updated");
+                            setConnectionStatus(
+                                "Brain analysis complete - song recommendations updated"
+                            );
                         })
                         .catch((error) => {
                             console.error("Error in metric processing:", error);
-                            setConnectionStatus("Error in analysis - using default recommendations");
+                            setConnectionStatus(
+                                "Error in analysis - using default recommendations"
+                            );
                             // Try with sample data as fallback
                             processMetrics(sampleData);
                         });
                 } else {
                     console.log("No metrics collected, using sample data");
-                    processMetrics(sampleData)
-                        .then(() => {
-                            setConnectionStatus("Analysis complete with sample data");
-                        });
+                    processMetrics(sampleData).then(() => {
+                        setConnectionStatus("Analysis complete with sample data");
+                    });
                 }
             } else {
                 setConnectionStatus("Emotiv data collection stopped manually");
                 // Even if manually stopped, process whatever data we collected
-                if (metricsData.length > 10) { // Only process if we have enough data points
+                if (metricsData.length > 10) {
+                    // Only process if we have enough data points
                     processMetrics(metricsData);
                 }
             }

@@ -220,12 +220,12 @@ const SpotifyPlayer = ({ trackUrl, onPlaybackChange, onError, duration }: Spotif
             clearTimeout(timerRef.current);
             timerRef.current = null;
         }
-        
+
         if (intervalRef.current) {
             clearInterval(intervalRef.current);
             intervalRef.current = null;
         }
-        
+
         setRemainingTime(null);
     }, [onPlaybackChange]);
 
