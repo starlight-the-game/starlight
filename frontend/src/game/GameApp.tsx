@@ -1,6 +1,6 @@
 import axios from "axios";
 import Phaser from "phaser";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { apiHost } from "../common/site_setting";
@@ -14,6 +14,7 @@ function GameApp() {
     const gameRef = useRef(null);
     const location = useLocation();
     const navigate = useNavigate();
+    const [game, setGame] = useState<Phaser.Game | null>(null);
 
     // Add logging to verify the data is received correctly
     console.log("GameApp received location state:", location.state);
@@ -25,7 +26,7 @@ function GameApp() {
     };
 
     useEffect(() => {
-        const game = new Phaser.Game({
+        const phaserGame = new Phaser.Game({
             type: Phaser.AUTO,
             parent: gameRef.current,
             width: 1920,
@@ -44,19 +45,21 @@ function GameApp() {
             antialias: true
         });
 
+        setGame(phaserGame);
+
         // Debug game creation
-        console.log("Phaser game instance created:", game);
+        console.log("Phaser game instance created:", phaserGame);
 
         try {
             // Add scenes with more complete data
-            game.scene.add("DataLoader", DataLoader, true, {
+            phaserGame.scene.add("DataLoader", DataLoader, true, {
                 songId: songId,
                 songIndex: songIndex,
                 songData: song // Pass complete song data
             });
-            game.scene.add("AssetLoader", AssetLoader);
-            game.scene.add("Game", Game);
-            game.scene.add("GameFinalizer", GameFinalizer);
+            phaserGame.scene.add("AssetLoader", AssetLoader);
+            phaserGame.scene.add("Game", Game);
+            phaserGame.scene.add("GameFinalizer", GameFinalizer);
 
             console.log("Game scenes added successfully");
         } catch (error) {
@@ -81,14 +84,35 @@ function GameApp() {
         });
 
         return () => {
-            game.destroy(true);
+            phaserGame.destroy(true);
             EventEmitter.removeListener("game-finished");
         };
     }, [songId, songIndex, song, navigate]);
 
+    // Add a click handler to unlock audio context
+    const handleGameAreaClick = () => {
+        if (
+            game &&
+            game.sound &&
+            "context" in game.sound &&
+            game.sound.context &&
+            game.sound.context.state === "suspended"
+        ) {
+            game.sound.context
+                .resume()
+                .then(() => {
+                    console.log("Audio context resumed successfully");
+                })
+                .catch((err) => {
+                    console.error("Failed to resume audio context:", err);
+                });
+        }
+    };
+
     return (
         <div
             ref={gameRef}
+            onClick={handleGameAreaClick}
             style={{
                 display: "flex",
                 justifyContent: "center",

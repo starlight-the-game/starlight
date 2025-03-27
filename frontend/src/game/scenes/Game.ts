@@ -233,22 +233,38 @@ class Game extends Phaser.Scene {
     }
 
     create() {
-        this.bgMusic = this.sound.get("music");
         this.scene.resume();
-
-        // Check if the music was found before trying to play it
-        if (this.bgMusic) {
-            this.bgMusic.play();
-        } else {
-            console.warn(
-                "Background music 'music' could not be found. Make sure it's properly loaded."
-            );
-        }
-
         this.time.paused = false;
         this.dataCollectionEvent!.paused = false;
         this.endGameEvent!.paused = false;
         this.inGameTimeInMs = 0;
+        this.bgMusic = this.sound.add("music");
+
+        if (
+            "context" in this.sound &&
+            (this.sound as Phaser.Sound.WebAudioSoundManager).context.state === "suspended"
+        ) {
+            console.log("Audio context is suspended, waiting for user interaction");
+
+            const text = this.add
+                .text(
+                    this.cameras.main.centerX,
+                    this.cameras.main.centerY,
+                    "Click/Tap to enable audio",
+                    { font: "24px Arial", color: "#ffffff" }
+                )
+                .setOrigin(0.5);
+
+            this.input.once("pointerdown", () => {
+                (this.sound as Phaser.Sound.WebAudioSoundManager).context.resume().then(() => {
+                    console.log("Audio context resumed by interaction");
+                    text.destroy();
+                    this.bgMusic?.play();
+                });
+            });
+        } else {
+            this.bgMusic?.play();
+        }
     }
 
     /**
@@ -819,7 +835,19 @@ class Game extends Phaser.Scene {
             this.time.paused = true;
             this.physics.pause();
             this.notes.setVelocityY(0);
-            this.bgMusic?.pause();
+
+            // Add logging for debugging
+            console.log("Game paused - pausing audio");
+            if (this.bgMusic) {
+                if (this.bgMusic.isPlaying) {
+                    this.bgMusic.pause();
+                } else {
+                    console.log("Audio was not playing when pause was triggered");
+                }
+            } else {
+                console.warn("No background music found to pause");
+            }
+
             this.pauseDimBg?.setAlpha(0.5);
             this.pauseText?.setText("PAUSED");
             this.pauseHint?.setText("Press ESC to resume.");
@@ -827,7 +855,15 @@ class Game extends Phaser.Scene {
             this.time.paused = false;
             this.physics.resume();
             this.notes.setVelocityY(this.noteSpeed * this.noteScale);
-            this.bgMusic?.resume();
+
+            // Add logging for debugging
+            console.log("Game resumed - resuming audio");
+            if (this.bgMusic) {
+                this.bgMusic.resume();
+            } else {
+                console.warn("No background music found to resume");
+            }
+
             this.pauseDimBg?.setAlpha(0);
             this.pauseText?.setText("");
             this.pauseHint?.setText("");
@@ -838,6 +874,11 @@ class Game extends Phaser.Scene {
      * Restart the scene.
      */
     restartScene() {
+        // Stop audio before restarting to prevent audio leaks
+        if (this.bgMusic) {
+            this.bgMusic.stop();
+        }
+
         this.time.paused = false;
         this.scene.restart();
     }
