@@ -7,6 +7,9 @@ class Cortex {
     private socket: WebSocket;
     private user: CortexUser;
     private metricCallback?: (metData: any) => void;
+    private messageHandler?: (data: WebSocket.Data) => void;
+    private lastMetricTimestamp: number = 0;
+    private lastMetricData: any = null;
 
     constructor(user: CortexUser, socketUrl: string = "wss://localhost:6868") {
         this.socket = new WebSocket(socketUrl, { rejectUnauthorized: false });
@@ -179,17 +182,64 @@ class Cortex {
         // Store the callback if provided
         this.metricCallback = callback;
 
-        this.socket.send(JSON.stringify(subRequest));
+        // Remove previous message handler if it exists
+        if (this.messageHandler) {
+            this.socket.removeListener("message", this.messageHandler);
+        }
 
-        this.socket.on("message", (data) => {
-            const parsedData = JSON.parse(data.toString());
-            if (parsedData["met"]) {
-                // Call the callback with the metric data if provided
-                if (this.metricCallback) {
-                    this.metricCallback(parsedData["met"]);
+        // Create a new message handler
+        this.messageHandler = (data) => {
+            try {
+                const parsedData = JSON.parse(data.toString());
+                if (parsedData["met"]) {
+                    // Check if this is a duplicate message
+                    const isDuplicate = this.isDuplicateMetric(parsedData["met"]);
+
+                    if (!isDuplicate && this.metricCallback) {
+                        // Only process unique metric data
+                        this.metricCallback(parsedData["met"]);
+                    }
                 }
+            } catch (error) {
+                console.error("Error processing Emotiv data:", error);
             }
-        });
+        };
+
+        // Add the new message handler
+        this.socket.on("message", this.messageHandler);
+
+        // Send the subscription request
+        this.socket.send(JSON.stringify(subRequest));
+    }
+
+    /**
+     * Check if a metric data point is a duplicate of the previous one
+     */
+    private isDuplicateMetric(metricData: any): boolean {
+        if (!metricData || !Array.isArray(metricData)) return false;
+
+        // Convert metric data to string for comparison
+        const dataString = JSON.stringify(metricData);
+
+        // If this is the same as the last data point, it's a duplicate
+        const isDuplicate = dataString === JSON.stringify(this.lastMetricData);
+
+        // Update last metric data for next comparison
+        this.lastMetricData = metricData;
+
+        // Current timestamp for rate limiting
+        const now = Date.now();
+
+        // Also consider minimum time between valid data points (100ms)
+        // Emotiv headsets typically provide data at 8Hz or slower
+        const isTooSoon = now - this.lastMetricTimestamp < 100;
+
+        if (!isDuplicate) {
+            // Update timestamp for non-duplicate data
+            this.lastMetricTimestamp = now;
+        }
+
+        return isDuplicate || isTooSoon;
     }
 
     /**
@@ -208,6 +258,12 @@ class Cortex {
         };
 
         this.socket.send(JSON.stringify(unsubRequest));
+
+        // Remove the message handler
+        if (this.messageHandler) {
+            this.socket.removeListener("message", this.messageHandler);
+            this.messageHandler = undefined;
+        }
 
         // Remove the callback reference
         this.metricCallback = undefined;

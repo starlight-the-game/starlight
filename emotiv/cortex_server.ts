@@ -25,6 +25,7 @@ const allMetrics: MetricData[][] = [];
 let cortexInstance: Cortex | null = null;
 let sessionToken: string | null = null;
 let sessionId: string | null = null;
+let lastMetricHash = "";
 
 wss.on("listening", () => {
     console.log("WebSocket server is listening on port 8686");
@@ -108,7 +109,10 @@ wss.on("connection", async (ws) => {
 
                         console.log("Starting Emotiv data collection");
                         isCollecting = true;
-                        allMetrics.length = 0; // Clear previous metrics
+                        // Explicitly clear metrics at the start of collection
+                        allMetrics.length = 0;
+                        lastMetricHash = "";
+                        console.log("Cleared previous metrics for new collection");
 
                         // Extract track duration if provided
                         const trackDuration = parsedMessage.duration
@@ -194,8 +198,21 @@ wss.on("connection", async (ws) => {
                                 try {
                                     // Format raw data for passing to client
                                     const rawDataStr = printRawMetricData(metricData);
-
                                     const formattedMetric = formatMetric(metricData);
+
+                                    // Create a hash of the metric data to check for duplicates
+                                    const metricHash = JSON.stringify(formattedMetric);
+
+                                    // Skip if this exact metric was just processed
+                                    if (metricHash === lastMetricHash) {
+                                        console.log("Skipping duplicate metric data");
+                                        return;
+                                    }
+
+                                    // Update last metric hash
+                                    lastMetricHash = metricHash;
+
+                                    // Add to metrics collection
                                     allMetrics.push(formattedMetric);
 
                                     // Send to all connected clients
@@ -236,49 +253,71 @@ wss.on("connection", async (ws) => {
                                 console.log(
                                     `Broadcasting end message with ${allMetrics.length} metrics`
                                 );
-                                broadcast({
-                                    op: "end",
-                                    totalMetrics: allMetrics.length,
-                                    allData: allMetrics
-                                });
+
+                                // Only broadcast if we actually have metrics
+                                if (allMetrics.length > 0) {
+                                    broadcast({
+                                        op: "end",
+                                        totalMetrics: allMetrics.length,
+                                        allData: allMetrics
+                                    });
+                                } else {
+                                    broadcast({
+                                        op: "status",
+                                        message:
+                                            "Collection completed but no metrics were collected"
+                                    });
+                                }
                             }
                         }, disconnectTimeout);
 
                         break;
 
                     case "stop":
-                        if (!isCollecting) {
-                            console.log("Not collecting, ignoring stop command");
-                            return;
-                        }
+                        console.log("Processing stop command from client");
 
-                        console.log("Stopping data collection by client request");
-                        isCollecting = false;
-
-                        if (cortexInstance && sessionToken && sessionId) {
+                        // Always process collected metrics regardless of collection state
+                        if (cortexInstance && sessionToken && sessionId && isCollecting) {
                             cortexInstance.unsubscribe(sessionToken, sessionId);
                             console.log("Unsubscribed from Cortex metrics");
+                            isCollecting = false;
                         }
 
-                        // Send the metrics collected so far
-                        console.log(`Sending ${allMetrics.length} metrics to client`);
-                        ws.send(
-                            JSON.stringify({
-                                op: "end",
-                                totalMetrics: allMetrics.length,
-                                allData: allMetrics
-                            })
-                        );
+                        // Always send metrics even if we weren't collecting
+                        if (allMetrics.length > 0) {
+                            console.log(`Sending ${allMetrics.length} metrics to client`);
+                            ws.send(
+                                JSON.stringify({
+                                    op: "end",
+                                    totalMetrics: allMetrics.length,
+                                    allData: allMetrics
+                                })
+                            );
 
-                        // Also broadcast to all other clients
-                        broadcast(
-                            {
-                                op: "end",
-                                totalMetrics: allMetrics.length,
-                                allData: allMetrics
-                            },
-                            ws
-                        );
+                            // Also broadcast to all other clients
+                            broadcast(
+                                {
+                                    op: "end",
+                                    totalMetrics: allMetrics.length,
+                                    allData: allMetrics
+                                },
+                                ws
+                            );
+
+                            // Clear metrics after sending to ensure fresh data for next song
+                            console.log("Clearing metrics for next collection");
+                            allMetrics.length = 0;
+                            lastMetricHash = "";
+                        } else {
+                            console.log("No metrics to send");
+                            ws.send(
+                                JSON.stringify({
+                                    op: "status",
+                                    message:
+                                        "No metrics collected - ensure headset is properly connected"
+                                })
+                            );
+                        }
                         break;
 
                     case "data":
@@ -313,6 +352,9 @@ wss.on("connection", async (ws) => {
                 console.log("All clients disconnected, stopping data collection");
                 cortexInstance.unsubscribe(sessionToken, sessionId);
                 isCollecting = false;
+
+                // Save metrics for reconnecting clients rather than clearing them
+                console.log(`Preserved ${allMetrics.length} metrics for reconnecting clients`);
             }
         });
 

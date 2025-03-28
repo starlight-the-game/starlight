@@ -77,14 +77,17 @@ export class SongRecommendationModel {
      * Step 1: Compute Exponentially Weighted Moving Average (EWMA)
      */
     public calculateEWMA(data: MetricData[][]): number[] {
+        if (!data || data.length === 0) {
+            throw new Error("No metrics data provided for EWMA calculation");
+        }
+
         const ema: number[] = new Array(6).fill(0);
 
         data.forEach((metrics, t) => {
             metrics.forEach((metric, index) => {
                 if (metric.isActive) {
-                    // If metric value is 0, replace with random value between 0.1 and 1.0
-                    // This prevents issues in subsequent calculations when EEG quality is low
-                    const value = metric.value === 0 ? Math.random() * 0.9 + 0.1 : metric.value;
+                    // If metric value is 0, use a small positive value
+                    const value = metric.value === 0 ? 0.1 : metric.value;
 
                     ema[index] =
                         t === 0 ? value : this.alpha * value + (1 - this.alpha) * ema[index];
@@ -92,6 +95,15 @@ export class SongRecommendationModel {
             });
         });
 
+        // Check for invalid values but DON'T use defaults
+        for (let i = 0; i < ema.length; i++) {
+            if (isNaN(ema[i]) || !isFinite(ema[i]) || ema[i] === 0) {
+                console.error(`Invalid EMA value at index ${i}: ${ema[i]}`);
+                throw new Error(`Invalid EMA calculation result at index ${i}`);
+            }
+        }
+
+        console.log("EWMA calculated successfully:", ema);
         return ema;
     }
 
@@ -122,16 +134,11 @@ export class SongRecommendationModel {
 
             const W = math.multiply(deltaT_matrix, V_song_pinv) as number[][];
 
-            console.log(
-                "Matrix dimensions - deltaT:",
-                math.size(deltaT_matrix),
-                "V_song_pinv:",
-                math.size(V_song_pinv)
-            );
+            console.log("Weight matrix calculated:", W);
             return W;
         } catch (error) {
             console.error("Error in weight matrix calculation:", error);
-            return Array(6).fill(Array(5).fill(0.001));
+            throw new Error("Failed to compute weight matrix: " + error);
         }
     }
 
@@ -167,16 +174,19 @@ export class SongRecommendationModel {
 
             const V_target = V_target_matrix.map((row) => row[0]);
 
-            return [
+            const result = [
                 Math.max(0, Math.min(1, V_target[0])),
                 Math.max(0, Math.min(1, V_target[1])),
                 Math.max(0, Math.min(1, V_target[2])),
                 Math.max(0, Math.min(300, V_target[3])),
                 Math.max(-50, Math.min(0, V_target[4]))
             ];
+
+            console.log("Ideal song properties calculated:", result);
+            return result;
         } catch (error) {
             console.error("Error computing ideal song properties:", error);
-            return [0.5, 0.5, 0.5, 120, -10];
+            throw new Error("Failed to compute ideal song properties: " + error);
         }
     }
 
@@ -191,6 +201,16 @@ export class SongRecommendationModel {
         if (!trackList || trackList.length === 0) {
             console.error("No track list available for song matching");
             throw new Error("Empty track list");
+        }
+
+        // Ensure we have valid ideal properties
+        if (
+            !idealProps ||
+            idealProps.length < 5 ||
+            idealProps.some((p) => isNaN(p) || !isFinite(p))
+        ) {
+            console.error("Invalid ideal properties for song matching:", idealProps);
+            throw new Error("Invalid ideal properties");
         }
 
         // Calculate distance for each song
@@ -212,11 +232,11 @@ export class SongRecommendationModel {
         // Get the best song
         const bestSong = distances[0].song;
 
-        // Return ALL song IDs sorted by distance - this is the key change
+        // Return ALL song IDs sorted by distance
         const sortedSongIds = distances.map((d) => d.id);
 
-        // Log the top 6 songs with their distances for debugging
-        console.log(`Top recommended songs (showing 6 of ${sortedSongIds.length} total):`);
+        // Log the top songs for debugging
+        console.log(`Top recommended songs based on actual metrics (showing top 6):`);
         distances.slice(0, 6).forEach((d, index) => {
             console.log(
                 `${index + 1}. ID: ${d.id}, Distance: ${d.distance.toFixed(4)}, Title: ${d.song.title}`
